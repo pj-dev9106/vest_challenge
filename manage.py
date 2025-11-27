@@ -1,8 +1,11 @@
 from app import create_app
 from app.models import db, Trade
 from app.services.ingestion import ingest_file_from_path
+from pathlib import Path
 import sys
 
+BASE_DIR = Path(__file__).resolve().parent
+SAMPLE_DIR = BASE_DIR / "sample_data"
 
 def init_db():
     app = create_app()
@@ -14,8 +17,11 @@ def init_db():
 def load_sample_data():
     app = create_app()
     with app.app_context():
-        success1, error1 = ingest_file_from_path('sample_data/format1_sample.csv', 'format1')
-        success2, error2 = ingest_file_from_path('sample_data/format2_sample.txt', 'format2')
+        format1_path = SAMPLE_DIR / "format1_sample.csv"
+        format2_path = SAMPLE_DIR / "format2_sample.txt"
+
+        success1, error1 = ingest_file_from_path(str(format1_path), 'format1')
+        success2, error2 = ingest_file_from_path(str(format2_path), 'format2')
 
         print(f"Format1 ingestion: {success1} successes, {error1} errors")
         print(f"Format2 ingestion: {success2} successes, {error2} errors")

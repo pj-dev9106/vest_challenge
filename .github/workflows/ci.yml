@@ -61,13 +61,13 @@ jobs:
             set -e
 
             # Clone or update repo
-            if [ -d ~/hometask ]; then
-              cd ~/hometask
-              git pull
-            else
-              git clone https://github.com/${{ github.repository }} ~/hometask
-              cd ~/hometask
-            fi
+            # Ensure clean folder
+            rm -rf ~/hometask
+
+            # Clone fresh repo
+            git clone https://github.com/${{ github.repository }} ~/hometask
+            cd ~/hometask
+
 
             # Build Docker image
             docker build -t portfolio-app .

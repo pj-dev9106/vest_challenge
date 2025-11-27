@@ -40,10 +40,24 @@ def clear_data():
         else:
             print("Operation cancelled.")
 
+def ingest_file_cli(file_path: str, file_format: str):
+    """
+    CLI helper to ingest a single file into the database.
+
+    Usage:
+      python manage.py ingest_file /path/to/file.csv format1
+      python manage.py ingest_file /path/to/file.txt format2
+    """
+    app = create_app()
+    with app.app_context():
+        success, error = ingest_file_from_path(file_path, file_format)
+        print(f"Ingested {file_path} as {file_format}: {success} successes, {error} errors")
+
+
 
 if __name__ == '__main__':
-    if len(sys.argv) != 2:
-        print("Usage: python manage.py [init_db|load_sample|clear_data]")
+    if len(sys.argv) < 2:
+        print("Usage: python manage.py [init_db|load_sample|clear_data|ingest_file]")
         sys.exit(1)
 
     command = sys.argv[1]
@@ -54,6 +68,13 @@ if __name__ == '__main__':
         load_sample_data()
     elif command == 'clear_data':
         clear_data()
+    elif command == 'ingest_file':
+        if len(sys.argv) != 4:
+            print("Usage: python manage.py ingest_file <file_path> <format1|format2>")
+            sys.exit(1)
+        file_path = sys.argv[2]
+        file_format = sys.argv[3]
+        ingest_file_cli(file_path, file_format)
     else:
         print("Unknown command:", command)
         sys.exit(1)

@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        env:
+          FLASK_ENV: testing
+        run: |
+          pytest --cov=app --cov-report=term-missing
+
+      - name: Build Docker image (CI sanity check)
+        run: |
+          docker build -t portfolio-app .
+
+  deploy:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    # Only deploy from main branch, not from PRs
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/ec2_key
+          chmod 600 ~/.ssh/ec2_key
+          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy to EC2 via SSH
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          API_KEY: ${{ secrets.API_KEY }}
+        run: |
+          ssh -i ~/.ssh/ec2_key ubuntu@"$EC2_HOST" << EOF
+            set -e
+
+            # Clone or update repo
+            if [ -d ~/hometask ]; then
+              cd ~/hometask
+              git pull
+            else
+              git clone https://github.com/${{ github.repository }} ~/hometask
+              cd ~/hometask
+            fi
+
+            # Build Docker image
+            docker build -t portfolio-app .
+
+            # Stop old container if exists
+            docker rm -f portfolio-app || true
+
+            # Run DB migrations/init + sample load (idempotent enough for demo)
+            docker run --rm \
+              -e DATABASE_URL="$DATABASE_URL" \
+              -e API_KEY="$API_KEY" \
+              portfolio-app \
+              python manage.py init_db || true
+
+            docker run --rm \
+              -e DATABASE_URL="$DATABASE_URL" \
+              -e API_KEY="$API_KEY" \
+              portfolio-app \
+              python manage.py load_sample || true
+
+            # Start app container on port 80
+            docker run -d \
+              --name portfolio-app \
+              -p 80:5000 \
+              -e FLASK_ENV=production \
+              -e DATABASE_URL="$DATABASE_URL" \
+              -e API_KEY="$API_KEY" \
+              portfolio-app
+          EOF

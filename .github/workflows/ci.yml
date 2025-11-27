@@ -37,7 +37,6 @@ jobs:
   deploy:
     needs: build-and-test
     runs-on: ubuntu-latest
-    # Only deploy from main branch, not from PRs
     if: github.ref == 'refs/heads/main'
 
     steps:
@@ -51,13 +50,13 @@ jobs:
           chmod 600 ~/.ssh/ec2_key
           ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
 
-            - name: Deploy to EC2 via SSH
+      - name: Deploy to EC2 via SSH
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           API_KEY: ${{ secrets.API_KEY }}
         run: |
-          ssh -i ~/.ssh/ec2_key ubuntu@"$EC2_HOST" << EOF
+          ssh -i ~/.ssh/ec2_key ubuntu@"$EC2_HOST" << 'EOF'
             set -e
 
             # Ensure Docker is installed & running (idempotent)
@@ -68,7 +67,7 @@ jobs:
 
             # Clean and clone repo fresh
             rm -rf ~/hometask
-            git clone https://github.com/${{ github.repository }} ~/hometask
+            git clone https://github.com/${GITHUB_REPOSITORY} ~/hometask
             cd ~/hometask
 
             # Build Docker image
@@ -99,4 +98,3 @@ jobs:
               -e API_KEY="$API_KEY" \
               portfolio-app
           EOF
-

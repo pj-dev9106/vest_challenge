@@ -51,7 +51,7 @@ jobs:
           chmod 600 ~/.ssh/ec2_key
           ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: Deploy to EC2 via SSH
+            - name: Deploy to EC2 via SSH
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -60,36 +60,38 @@ jobs:
           ssh -i ~/.ssh/ec2_key ubuntu@"$EC2_HOST" << EOF
             set -e
 
-            # Clone or update repo
-            # Ensure clean folder
-            rm -rf ~/hometask
+            # Ensure Docker is installed & running (idempotent)
+            sudo apt-get update -y
+            sudo apt-get install -y docker.io
+            sudo systemctl enable docker
+            sudo systemctl start docker
 
-            # Clone fresh repo
+            # Clean and clone repo fresh
+            rm -rf ~/hometask
             git clone https://github.com/${{ github.repository }} ~/hometask
             cd ~/hometask
 
-
             # Build Docker image
-            docker build -t portfolio-app .
+            sudo docker build -t portfolio-app .
 
             # Stop old container if exists
-            docker rm -f portfolio-app || true
+            sudo docker rm -f portfolio-app || true
 
-            # Run DB migrations/init + sample load (idempotent enough for demo)
-            docker run --rm \
+            # Run DB init & sample load (ok if rerun)
+            sudo docker run --rm \
               -e DATABASE_URL="$DATABASE_URL" \
               -e API_KEY="$API_KEY" \
               portfolio-app \
               python manage.py init_db || true
 
-            docker run --rm \
+            sudo docker run --rm \
               -e DATABASE_URL="$DATABASE_URL" \
               -e API_KEY="$API_KEY" \
               portfolio-app \
               python manage.py load_sample || true
 
-            # Start app container on port 80
-            docker run -d \
+            # Start main app container on port 80
+            sudo docker run -d \
               --name portfolio-app \
               -p 80:5000 \
               -e FLASK_ENV=production \
@@ -97,3 +99,4 @@ jobs:
               -e API_KEY="$API_KEY" \
               portfolio-app
           EOF
+

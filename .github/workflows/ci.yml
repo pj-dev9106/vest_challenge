@@ -55,46 +55,41 @@ jobs:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           API_KEY: ${{ secrets.API_KEY }}
+          REPO: ${{ github.repository }}
         run: |
-          ssh -i ~/.ssh/ec2_key ubuntu@"$EC2_HOST" << 'EOF'
+          ssh -i ~/.ssh/ec2_key ubuntu@"$EC2_HOST" << EOF
             set -e
 
-            # Ensure Docker is installed & running (idempotent)
-            sudo apt-get update -y
-            sudo apt-get install -y docker.io
-            sudo systemctl enable docker
-            sudo systemctl start docker
+          sudo apt-get update -y
+          sudo apt-get install -y docker.io
+          sudo systemctl enable docker
+          sudo systemctl start docker
 
-            # Clean and clone repo fresh
-            rm -rf ~/hometask
-            git clone https://github.com/${GITHUB_REPOSITORY} ~/hometask
-            cd ~/hometask
+          rm -rf ~/hometask
+          git clone https://github.com/$REPO ~/hometask
+          cd ~/hometask
 
-            # Build Docker image
-            sudo docker build -t portfolio-app .
+          sudo docker build -t portfolio-app .
 
-            # Stop old container if exists
-            sudo docker rm -f portfolio-app || true
+          sudo docker rm -f portfolio-app || true
 
-            # Run DB init & sample load (ok if rerun)
-            sudo docker run --rm \
-              -e DATABASE_URL="$DATABASE_URL" \
-              -e API_KEY="$API_KEY" \
-              portfolio-app \
-              python manage.py init_db || true
+          sudo docker run --rm \
+            -e DATABASE_URL="$DATABASE_URL" \
+            -e API_KEY="$API_KEY" \
+            portfolio-app \
+            python manage.py init_db || true
 
-            sudo docker run --rm \
-              -e DATABASE_URL="$DATABASE_URL" \
-              -e API_KEY="$API_KEY" \
-              portfolio-app \
-              python manage.py load_sample || true
+          sudo docker run --rm \
+            -e DATABASE_URL="$DATABASE_URL" \
+            -e API_KEY="$API_KEY" \
+            portfolio-app \
+            python manage.py load_sample || true
 
-            # Start main app container on port 80
-            sudo docker run -d \
-              --name portfolio-app \
-              -p 80:5000 \
-              -e FLASK_ENV=production \
-              -e DATABASE_URL="$DATABASE_URL" \
-              -e API_KEY="$API_KEY" \
-              portfolio-app
+          sudo docker run -d \
+            --name portfolio-app \
+            -p 80:5000 \
+            -e FLASK_ENV=production \
+            -e DATABASE_URL="$DATABASE_URL" \
+            -e API_KEY="$API_KEY" \
+            portfolio-app
           EOF

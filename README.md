@@ -1,450 +1,231 @@
 # Portfolio Data Clearinghouse
 
-A Flask-based API for ingesting and querying portfolio trade data with compliance monitoring.
+This is the little “clearinghouse” project for the Vest exercise. It basically ingests some trade files, dumps everything into Postgres, and exposes a few endpoints to look at trades, positions, and a simple compliance rule (the 20% concentration thing). Everything runs in AWS (EC2 + RDS) and deploys through GitHub Actions.
 
-## Features
+I tried to keep things simple but also close enough to “real” infra.
 
-- **Dual Format Ingestion**: Supports two different trade file formats
-- **RESTful API**: Three endpoints for data access
-- **Compliance Monitoring**: Automatic alerts for positions exceeding 20% threshold
-- **Secure**: API key authentication
-- **Robust Testing**: Comprehensive unit test coverage
-- **Production Ready**: PostgreSQL with connection pooling
-
-## Architecture
-
+Currently service is deployed to AWS instance which is created by terraform.
+You can check settings in instance.
+You can log in to ssh with this command.
 ```
-┌─────────────┐
-│  Trade Files│
-│ (2 formats) │
-└──────┬──────┘
-       │
-       v
-┌─────────────┐
-│  Ingestion  │
-│   Service   │
-└──────┬──────┘
-       │
-       v
-┌─────────────┐
-│ PostgreSQL  │
-│  Database   │
-└──────┬──────┘
-       │
-       v
-┌─────────────┐
-│  Flask API  │
-│ (3 endpoints)│
-└─────────────┘
+ssh -i ~/portfolio-app-key.pem ubuntu@35.85.155.242
 ```
 
-## Database Schema
 
-**Table: `trades`**
+## What this thing does (in plain English)
 
-- Unified schema supporting both file formats
-- Indexed on `trade_date`, `account_id`, and `ticker`
-- Supports negative shares for short positions/sells
+- There’s an **SFTP server** where files get dropped. Two different file formats.  
+- Every few minutes a cron job checks the directory, grabs whatever showed up, and loads them into **one table** in Postgres.
+- A Flask app sits in front of it and gives you:
+  - `/api/blotter?date=YYYY-MM-DD` → just raw trades for that date  
+  - `/api/positions?...` → how each account is allocated by ticker  
+  - `/api/alarms?...` → finds cases where one ticker is >20% of the account
+- Everything gets put into Docker → GitHub Actions → EC2.
+- Logs also print out “alerts” for the concentration rule, like a pretend version of what you’d ship to CloudWatch/SNS.
+- API is protected with a super basic API key header.
 
-## API Endpoints
+This is all based on the exercise doc you sent and the AWS environment provided.
 
-All endpoints require `X-API-Key` header for authentication.
+## Quick sketch of the setup
 
-### 1. GET `/api/blotter?date=YYYY-MM-DD`
+There’s an EC2 box running Docker.  
+It has:
 
-Returns all trade/position data for a given date in simplified format.
+- `/sftp/inbox` — files land here  
+- `/sftp/uploads` — processed files get moved here  
+- A cron job every 5 minutes that basically runs:  
+  “hey Docker, ingest anything new and archive it”
 
-**Example Request:**
+The app itself is a Flask service container that talks to RDS Postgres.  
+Schema is intentionally super simple — one table with all fields from both formats normalized.
 
-```bash
-curl -H "X-API-Key: your-api-key" \
-  http://localhost:5000/api/blotter?date=2025-01-15
+## Architecture (hand-drawn vibe)
+
+```
+[SFTP uploads] → /sftp/inbox → cron → manage.py ingest → Postgres → Flask API
 ```
 
-**Example Response:**
+And the API is just sitting on port 80 of the EC2 machine behind Docker.
 
-```json
-{
-  "date": "2025-01-15",
-  "count": 10,
-  "data": [
-    {
-      "date": "2025-01-15",
-      "account_id": "ACC001",
-      "ticker": "AAPL",
-      "shares": 100.0,
-      "price": 185.5,
-      "trade_type": "BUY",
-      "settlement_date": "2025-01-17"
-    }
-  ]
-}
+## Tech used
+
+Mostly:
+
+- Python + Flask
+- SQLAlchemy
+- Postgres (RDS)
+- Docker + gunicorn
+- Terraform (for AWS infra)
+- GitHub Actions for CI/CD
+
+## Folder stuff (roughly)
+
+```
+app/
+  models.py
+  routes/api.py
+  services/
+    ingestion.py
+    alerts.py
+  utils/auth.py
+manage.py
+terraform/
+.github/workflows/
+docker-compose.yml
+Dockerfile
 ```
 
-### 2. GET `/api/positions?date=YYYY-MM-DD`
+Not everything is perfect but it’s functional.
 
-Returns percentage allocation by ticker for each account.
+## API (very simple)
 
-**Example Request:**
+Everything requires `X-API-Key`.
 
-```bash
-curl -H "X-API-Key: your-api-key" \
-  http://localhost:5000/api/positions?date=2025-01-15
+**Health:**  
+`GET /health`
+
+**Blotter:**  
+`GET /api/blotter?date=2025-01-15`
+
+**Positions:**  
+`GET /api/positions?date=2025-01-15`
+
+**Alarms:**  
+`GET /api/alarms?date=2025-01-15`  
+Returns any account where a single ticker >20%.
+
+## How to run locally
+
+1. Clone and venv:
+
 ```
-
-**Example Response:**
-
-```json
-{
-  "date": "2025-01-15",
-  "positions": {
-    "ACC001": {
-      "AAPL": 34.46,
-      "MSFT": 39.03,
-      "GOOGL": 26.52
-    },
-    "ACC002": {
-      "AAPL": 34.28,
-      "GOOGL": 9.89,
-      "NVDA": 55.84
-    }
-  }
-}
-```
-
-### 3. GET `/api/alarms?date=YYYY-MM-DD`
-
-Returns compliance alarms for accounts with any position exceeding 20%.
-
-**Example Request:**
-
-```bash
-curl -H "X-API-Key: your-api-key" \
-  http://localhost:5000/api/alarms?date=2025-01-15
-```
-
-**Example Response:**
-
-```json
-{
-  "date": "2025-01-15",
-  "alarms": {
-    "ACC001": false,
-    "ACC002": true,
-    "ACC003": true,
-    "ACC004": true
-  },
-  "violations": [
-    {
-      "account_id": "ACC002",
-      "violations": [
-        {
-          "ticker": "NVDA",
-          "percentage": 55.84,
-          "market_value": 60636.0
-        }
-      ]
-    }
-  ]
-}
-```
-
-### 4. GET `/health`
-
-Health check endpoint (no authentication required).
-
-**Example Response:**
-
-```json
-{
-  "status": "ok",
-  "database": "healthy",
-  "version": "1.0.0"
-}
-```
-
-## Quick Start
-
-### Prerequisites
-
-- Python 3.11+ (tested with 3.13)
-- PostgreSQL 12+ installed and running
-
-### Setup
-
-**1. Create PostgreSQL database:**
-
-```bash
-# Windows (using psql)
-psql -U postgres
-CREATE DATABASE portfolio_clearinghouse;
-\q
-
-# macOS/Linux
-createdb -U postgres portfolio_clearinghouse
-```
-
-**2. Clone and set up Python environment:**
-
-```bash
-# Create virtual environment
-python -m venv venv
-
-# Activate virtual environment
-# Windows:
-venv\Scripts\activate
-# macOS/Linux:
+python3 -m venv venv
 source venv/bin/activate
-
-# Install dependencies
 pip install -r requirements.txt
 ```
 
-**3. Configure database (optional):**
+2. Start local Postgres:
 
-```bash
-# Default: postgresql://postgres:postgres@localhost:5432/portfolio_clearinghouse
-# To customize:
-
-# Windows:
-set DATABASE_URL=postgresql://user:password@localhost:5432/portfolio_clearinghouse
-set API_KEY=your-api-key
-
-# macOS/Linux:
-export DATABASE_URL=postgresql://user:password@localhost:5432/portfolio_clearinghouse
-export API_KEY=your-api-key
+```
+docker-compose up -d db
 ```
 
-**4. Initialize and load data:**
+3. Make a `.env`:
 
-```bash
+```
+SECRET_KEY=dev-secret
+API_KEY=dev-api-key
+DATABASE_URL=postgresql://appuser:AppUserStrongPass123!@localhost:5432/portfolio_clearinghouse
+DEBUG=True
+```
+
+4. Initialize DB:
+
+```
 python manage.py init_db
 python manage.py load_sample
 ```
 
-**5. Run the application:**
+5. Run the app:
 
-```bash
+```
 python run.py
 ```
 
-The API will be available at `http://localhost:5000`
+Visit http://localhost:5000/health.
 
-**6. Test the API:**
+## Tests
 
-```bash
-# Health check (no auth)
-curl http://localhost:5000/health
-
-# Blotter endpoint (requires API key)
-curl -H "X-API-Key: dev-api-key-12345" \
-  "http://localhost:5000/api/blotter?date=2025-01-15"
-```
-
-## Configuration
-
-### Environment Variables
-
-Set environment variables or edit `config.py`:
-
-```bash
-# Windows
-set DATABASE_URL=postgresql://postgres:postgres@localhost:5432/portfolio_clearinghouse
-set API_KEY=your-secure-api-key
-set SECRET_KEY=your-secret-key
-set FLASK_ENV=development
-
-# macOS/Linux
-export DATABASE_URL=postgresql://postgres:postgres@localhost:5432/portfolio_clearinghouse
-export API_KEY=your-secure-api-key
-export SECRET_KEY=your-secret-key
-export FLASK_ENV=development
-```
-
-### Default Settings
-
-Default values in `config.py`:
-
-- **Database:** `postgresql://postgres:postgres@localhost:5432/portfolio_clearinghouse`
-- **API Key:** `dev-api-key-12345`
-- **Environment:** `development`
-
-⚠️ **Important:** Change the default API key and secret key in production!
-
-## Testing
-
-Run the test suite:
-
-```bash
-# Run all tests
-python -m pytest
-
-# Run with coverage
-python -m pytest --cov=. --cov-report=html
-
-# Run specific test file
-python -m pytest tests/test_api.py
-
-# Run with verbose output
-python -m pytest -v
-```
-
-All 24 tests should pass.
-
-View coverage report:
-
-```bash
-# macOS
-open htmlcov/index.html
-
-# Windows
-start htmlcov/index.html
-
-# Linux
-xdg-open htmlcov/index.html
-```
-
-## Data Ingestion
-
-### File Format 1: CSV
-
-```csv
-TradeDate,AccountID,Ticker,Quantity,Price,TradeType,SettlementDate
-2025-01-15,ACC001,AAPL,100,185.50,BUY,2025-01-17
-```
-
-### File Format 2: Pipe-Delimited
+Basic tests are under `tests/`.  
+Run with:
 
 ```
-REPORT_DATE|ACCOUNT_ID|SECURITY_TICKER|SHARES|MARKET_VALUE|SOURCE_SYSTEM
-20250115|ACC001|AAPL|100|18550.00|CUSTODIAN_A
+pytest --cov=app
 ```
 
-### Programmatic Ingestion
+## Deployment flow (GitHub Actions)
 
-```python
-from app import create_app
-from app.services.ingestion import ingest_file_from_path
+When `main` is pushed:
 
-app = create_app()
-with app.app_context():
-    # Ingest Format 1
-    success, errors = ingest_file_from_path('path/to/file.csv', 'format1')
+1. Install deps  
+2. Run the tests  
+3. Build the Docker image  
+4. SSH into EC2  
+5. Pull repo on EC2  
+6. Build & run the container  
+7. Run ingestion + init_db/load_sample if needed  
 
-    # Ingest Format 2
-    success, errors = ingest_file_from_path('path/to/file.txt', 'format2')
-```
+Secrets (in GitHub):
 
-## Management Commands
+- `EC2_HOST`
+- `EC2_SSH_KEY`
+- `DATABASE_URL`
+- `API_KEY`
 
-```bash
-# Initialize database
-python manage.py init_db
+## SFTP ingestion (how it works)
 
-# Load sample data
-python manage.py load_sample
-
-# Clear all data
-python manage.py clear_data
-```
-
-## Project Structure
+EC2 has an `sftpuser` chrooted into `/sftp`.  
+You upload like:
 
 ```
-hometask/
-├── app/
-│   ├── __init__.py           # Application factory
-│   ├── models.py             # Database models
-│   ├── routes/
-│   │   ├── __init__.py
-│   │   └── api.py            # API endpoints
-│   ├── services/
-│   │   ├── __init__.py
-│   │   └── ingestion.py      # Data ingestion service
-│   └── utils/
-│       ├── __init__.py
-│       └── auth.py           # Authentication utilities
-├── tests/
-│   ├── __init__.py
-│   ├── conftest.py           # Test configuration
-│   ├── test_api.py
-│   ├── test_auth.py
-│   ├── test_ingestion.py
-│   └── test_models.py
-├── sample_data/
-│   ├── format1_sample.csv
-│   └── format2_sample.txt
-├── config.py                 # Configuration
-├── run.py                    # Application entry point
-├── manage.py                 # Management commands
-├── requirements.txt          # Dependencies
-├── pytest.ini                # Test configuration
-└── README.md
+sftp sftpuser@<public-ip>
+cd inbox
+put format1_sample.csv
 ```
 
-## Security
+Cron job (`/usr/local/bin/process_sftp_ingest.sh`) does this every 5 minutes:
 
-- **API Key Authentication**: All endpoints (except `/health`) require `X-API-Key` header
-- **Input Validation**: Date parameters are validated
-- **SQL Injection Protection**: Using SQLAlchemy ORM
-- **Error Handling**: Graceful error responses without exposing internals
+- look for `*.csv` → call `ingest_file <file> format1`
+- look for `*.txt` → call `ingest_file <file> format2`
+- archive them into `/sftp/uploads`
 
-## Compliance Rules
+That’s basically it.
 
-**20% Position Limit**: The system monitors and alerts when any single ticker position exceeds 20% of an account's total value.
+## Alerts / logs
 
-**Calculation:**
+Concentration rule logic prints something like:
 
 ```
-Position % = (Ticker Market Value / Total Account Value) × 100
+{
+  "type": "concentration_violation",
+  "account_id": "ACC001",
+  "symbol": "AAPL",
+  "concentration": 0.27
+}
 ```
 
-## Performance Considerations
+In a real setup these would go to CloudWatch + SNS.
 
-- Database indexes on frequently queried columns
-- Efficient aggregation queries
-- Gunicorn with multiple workers for production
-- Connection pooling via SQLAlchemy
+## Terraform stuff
 
-## Error Handling
+Lives in `terraform/`.
 
-The API returns appropriate HTTP status codes:
+Creates:
 
-- `200`: Success
-- `400`: Bad Request (invalid parameters)
-- `401`: Unauthorized (missing API key)
-- `403`: Forbidden (invalid API key)
-- `404`: Not Found
-- `500`: Internal Server Error
+- RDS Postgres  
+- EC2 instance  
+- Security groups  
+- Required tagging: `CandidateId=kyle-gardner-vest-trial-001`
 
-## Development
+Run:
 
-**Run in development mode:**
-
-```bash
-export FLASK_ENV=development
-python run.py
+```
+terraform init
+terraform apply -var="allowed_cidr=$(curl -s ifconfig.me)/32"
 ```
 
-## Production Deployment
+Outputs include DB endpoint + EC2 public IP.
 
-1. **Set environment variables:**
+## Cleanup
 
-```bash
-export FLASK_ENV=production
-export API_KEY=your-strong-api-key-here
-export SECRET_KEY=your-strong-secret-key-here
-export DATABASE_URL=postgresql://user:password@host:5432/dbname
+```
+terraform destroy -var="allowed_cidr=$(curl -s ifconfig.me)/32"
 ```
 
-2. **Install production server:**
+## Things I’d improve if I had more time
 
-```bash
-pip install gunicorn
-```
-
-3. **Run with Gunicorn:**
-
-```bash
-gunicorn -w 4 -b 0.0.0.0:5000 "app:create_app()"
-```
+- Move secrets to AWS Secrets Manager
+- HTTPS (ALB + ACM)
+- ECS/Fargate
+- Pagination + filters on blotter/positions
+- Real alert delivery (SNS/slack webhook)

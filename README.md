@@ -58,7 +58,7 @@ Mostly:
 - Terraform (for AWS infra)
 - GitHub Actions for CI/CD
 
-## Folder stuff (roughly)
+## Project Structure
 
 ```
 app/
@@ -229,3 +229,4 @@ terraform destroy -var="allowed_cidr=$(curl -s ifconfig.me)/32"
 - ECS/Fargate
 - Pagination + filters on blotter/positions
 - Real alert delivery (SNS/slack webhook)
+

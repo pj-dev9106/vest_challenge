@@ -39,7 +39,7 @@ It has:
 The app itself is a Flask service container that talks to RDS Postgres.  
 Schema is intentionally super simple — one table with all fields from both formats normalized.
 
-## Architecture (hand-drawn vibe)
+## Architecture
 
 ```
 [SFTP uploads] → /sftp/inbox → cron → manage.py ingest → Postgres → Flask API
@@ -77,11 +77,11 @@ Dockerfile
 
 Not everything is perfect but it’s functional.
 
-## API (very simple)
+## API Core
 
 Everything requires `X-API-Key`.
 
-**Health:**  
+**Health-check:**  
 `GET /health`
 
 **Blotter:**  
@@ -229,4 +229,5 @@ terraform destroy -var="allowed_cidr=$(curl -s ifconfig.me)/32"
 - ECS/Fargate
 - Pagination + filters on blotter/positions
 - Real alert delivery (SNS/slack webhook)
+
 

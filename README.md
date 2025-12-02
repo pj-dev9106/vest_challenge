@@ -222,6 +222,96 @@ Outputs include DB endpoint + EC2 public IP.
 terraform destroy -var="allowed_cidr=$(curl -s ifconfig.me)/32"
 ```
 
+# SFTP Ingestion (How to Test)
+
+This service supports ingesting trade files via **SFTP**, matching the assessment requirements.
+
+## SFTP Access
+
+SFTP is enabled on the EC2 instance using a secure chroot configuration.
+
+You can connect with:
+
+```bash
+sftp sftpuser@35.85.155.242
+```
+
+Password (provided separately in the submission email or shared on request):
+
+```
+<your-password-here>
+```
+
+---
+
+## Directory Layout
+
+Once logged in, you are chrooted into `/sftp` and will see:
+
+```
+inbox     # upload CSV/TXT files here
+uploads   # processed files are moved here
+```
+
+Example session:
+
+```
+sftp> pwd
+Remote working directory: /
+sftp> ls
+inbox  uploads
+sftp> cd inbox
+sftp> put format1_sample.csv
+sftp> put format2_sample.txt
+sftp> bye
+```
+
+---
+
+## How Ingestion Works
+
+On the EC2 instance, a script located at:
+
+```
+/usr/local/bin/process_sftp_ingest.sh
+```
+
+runs periodically (via cron) and performs the ingestion flow:
+
+1. Scans `/sftp/inbox` for new `*.csv` (format1) and `*.txt` (format2) files  
+2. For each file, executes the Dockerized ingestion command:
+
+```bash
+docker run --rm \
+  -e DATABASE_URL="$DATABASE_URL" \
+  -e API_KEY="$API_KEY" \
+  -v /sftp:/sftp \
+  portfolio-app \
+  python manage.py ingest_file /sftp/inbox/<file> <format1|format2>
+```
+
+3. Loads parsed trades into the RDS Postgres database  
+4. Moves the processed file to `/sftp/uploads` for archiving  
+
+---
+
+## End-to-End Test
+
+1. Upload a file via SFTP into the `inbox` directory  
+2. Wait up to a few minutes for ingestion  
+   (or I can trigger the script manually during review)  
+3. Query the API using the trade date from your file:
+
+```bash
+curl -H "X-API-Key: dev-api-key-12345" \
+  "http://<EC2_PUBLIC_IP>/api/blotter?date=2025-01-15"
+```
+
+If the uploaded file contained trades dated `2025-01-15`, they will appear in the API response.
+
+---
+
+
 ## Things I’d improve if I had more time
 
 - Move secrets to AWS Secrets Manager

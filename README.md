@@ -224,13 +224,19 @@ terraform destroy -var="allowed_cidr=$(curl -s ifconfig.me)/32"
 
 # SFTP Ingestion (How to Test)
 
-This service supports ingesting trade files via **SFTP**, matching the assessment requirements.
+This service supports ingesting trade files via **SFTP**, matching the assessment requirement for:
+
+> “an FTP server (or something that at least will allow sftp protocol with SSH key handshakes)…”.
 
 ## SFTP Access
 
 SFTP is enabled on the EC2 instance using a secure chroot configuration.
 
-You can connect with:
+You can connect in **two ways**:
+
+---
+
+## 1. Password-based SFTP
 
 ```bash
 sftp sftpuser@35.85.155.242
@@ -244,16 +250,34 @@ Password (provided separately in the submission email or shared on request):
 
 ---
 
+## 2. SSH key-based SFTP (SSH key handshake)
+
+You can also authenticate using an SSH private key:
+
+```bash
+sftp -i ./sftpuser_key sftpuser@35.85.155.242
+```
+
+On the server, the matching public key is installed at:
+
+```
+/home/sftpuser/.ssh/authorized_keys
+```
+
+This satisfies the requirement to support **SFTP protocol with SSH key handshakes**.
+
+---
+
 ## Directory Layout
 
-Once logged in, you are chrooted into `/sftp` and will see:
+Once logged in, you are chrooted inside `/sftp` and will see:
 
 ```
 inbox     # upload CSV/TXT files here
 uploads   # processed files are moved here
 ```
 
-Example session:
+### Example SFTP Session
 
 ```
 sftp> pwd
@@ -279,7 +303,7 @@ On the EC2 instance, a script located at:
 runs periodically (via cron) and performs the ingestion flow:
 
 1. Scans `/sftp/inbox` for new `*.csv` (format1) and `*.txt` (format2) files  
-2. For each file, executes the Dockerized ingestion command:
+2. For each file, ingestion is run *inside Docker*:
 
 ```bash
 docker run --rm \
@@ -291,23 +315,26 @@ docker run --rm \
 ```
 
 3. Loads parsed trades into the RDS Postgres database  
-4. Moves the processed file to `/sftp/uploads` for archiving  
+4. Moves the processed file into `/sftp/uploads` as an archive  
+
+This means ingestion happens **directly from the SFTP drop folder** where the SFTP server writes files.
 
 ---
 
 ## End-to-End Test
 
-1. Upload a file via SFTP into the `inbox` directory  
-2. Wait up to a few minutes for ingestion  
-   (or I can trigger the script manually during review)  
-3. Query the API using the trade date from your file:
+1. Upload a file via SFTP (password or SSH key auth)
+   - Upload into the `inbox` directory  
+2. Wait a few minutes for ingestion  
+   (or I can manually trigger the ingest script during review)  
+3. Query the API using the trade date in your file:
 
 ```bash
 curl -H "X-API-Key: dev-api-key-12345" \
-  "http://<EC2_PUBLIC_IP>/api/blotter?date=2025-01-15"
+  "http://35.85.155.242/api/blotter?date=2025-01-15"
 ```
 
-If the uploaded file contained trades dated `2025-01-15`, they will appear in the API response.
+If your uploaded file contains trades dated `2025-01-15`, they will appear in the response.
 
 ---
 

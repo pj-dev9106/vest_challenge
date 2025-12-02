@@ -311,6 +311,182 @@ If the uploaded file contained trades dated `2025-01-15`, they will appear in th
 
 ---
 
+# Infrastructure & Terraform
+
+All AWS infrastructure for this project is managed with Terraform in the `terraform/` directory.
+
+## What Terraform Provisions
+
+Terraform creates the full environment required to run the Portfolio Data Clearinghouse:
+
+### **RDS Postgres**
+
+- Engine: PostgreSQL  
+- DB name: `portfolio_clearinghouse`  
+- Credentials provided via Terraform variables:
+  - `db_username`
+  - `db_password`
+- Connected only to the EC2 instance’s security group  
+- Tagged with:
+
+```
+CandidateId = kyle-gardner-vest-trial-001
+```
+
+### **EC2 Instance**
+
+- Ubuntu (t3.micro)  
+- Docker installed via user-data  
+- Public IP with the following exposed ports:
+  - `80/tcp` → Flask API (via Docker)
+  - `22/tcp` → SSH/SFTP (restricted; allowed only for the reviewer)
+
+### **Security Groups**
+
+- **App SG**
+  - Allows inbound HTTP (80)  
+  - Allows inbound SSH/SFTP (22) only from reviewer IP  
+- **DB SG**
+  - Allows Postgres (5432) **only from App SG**  
+  - Optionally allows temporary access from my IP for debugging
+
+---
+
+## How Infrastructure Is Applied (Manual Step)
+
+All infra is created + updated using Terraform manually, outside CI/CD.
+
+From the project root:
+
+```bash
+cd terraform
+
+terraform init
+
+terraform plan \
+  -var="allowed_cidr=$(curl -s ifconfig.me)/32"
+
+terraform apply \
+  -var="allowed_cidr=$(curl -s ifconfig.me)/32"
+```
+
+### Terraform Outputs
+
+After apply completes, Terraform prints:
+
+- **db_endpoint** → used to construct the `DATABASE_URL`  
+- **app_public_ip** → the EC2 public IP for both API & SFTP access  
+
+### Summary
+
+Terraform provisions and manages:
+
+- RDS  
+- EC2  
+- Security groups  
+- Networking  
+
+GitHub Actions deploys the actual **application code** onto the EC2 instance provisioned by Terraform.
+
+---
+
+# CI/CD (GitHub Actions) and Terraform
+
+The CI pipeline lives in:
+
+```
+.github/workflows/ci.yml
+```
+
+It has two jobs:
+
+1. **build-and-test** (every push / PR)
+2. **deploy** (only on `main`)
+
+---
+
+## 1. build-and-test (runs on all pushes / PRs)
+
+This job validates the Python code, Docker image, and Terraform files.
+
+It performs:
+
+- Repo checkout  
+- Install Python dependencies  
+- Run test suite:
+
+```bash
+pytest --cov=app --cov-report=term-missing
+```
+
+- Build the Docker image (sanity check):
+
+```bash
+docker build -t portfolio-app .
+```
+
+- Validate Terraform configuration (without modifying AWS):
+
+```bash
+cd terraform
+terraform init -backend=false
+terraform validate
+```
+
+Purpose:  
+**Ensure the app builds, tests pass, and Terraform syntax is valid on every push.**
+
+No infrastructure changes are applied automatically from CI.
+
+---
+
+## 2. deploy (runs only on `main`, after tests pass)
+
+Triggered when changes are merged into `main`.
+
+### Uses GitHub Secrets:
+
+- `EC2_HOST` — public DNS/IP of the Terraform-created EC2 instance  
+- `EC2_SSH_KEY` — SSH key for the ubuntu user  
+- `DATABASE_URL` — DSN pointing to RDS  
+- `API_KEY` — API key for X-API-Key authentication  
+
+### Deployment Flow
+
+The workflow SSHs into the EC2 instance and:
+
+1. Pulls the repository into `~/hometask`
+2. Builds the Docker image `portfolio-app`
+3. Runs DB initialization + sample ingestion (inside Docker):
+
+```bash
+python manage.py init_db
+python manage.py load_sample
+```
+
+4. Runs or updates the long-running app container:
+
+```bash
+docker run -d \
+  --name portfolio-app \
+  -p 80:5000 \
+  -e FLASK_ENV=production \
+  -e DATABASE_URL="$DATABASE_URL" \
+  -e API_KEY="$API_KEY" \
+  portfolio-app
+```
+
+This container exposes the Flask API on port 80.
+
+### Why Terraform is *not* run automatically in CI
+
+- Infra changes should be intentional  
+- Reviewer must control AWS resource usage  
+- Terraform is run manually only when provisioning or updating infra  
+
+CI/CD focuses strictly on **app deployment**, not infra updates.
+
+---
 
 ## Things I’d improve if I had more time
 

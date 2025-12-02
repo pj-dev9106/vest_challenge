@@ -33,6 +33,17 @@ jobs:
       - name: Build Docker image (CI sanity check)
         run: |
           docker build -t portfolio-app .
+      
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.5
+
+      - name: Validate Terraform configuration
+        working-directory: terraform
+        run: |
+          terraform init -backend=false
+          terraform validate
 
   deploy:
     needs: build-and-test
